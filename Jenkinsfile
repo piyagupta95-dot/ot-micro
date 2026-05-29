@@ -1,5 +1,5 @@
-// Import your globally configured shared library
-@Library('my-shared-library') _
+// Import your custom shared library from Jenkins global system settings
+@Library('company-deployment-lib') _
 
 import org.company.DeploymentManager
 
@@ -7,15 +7,15 @@ pipeline {
     agent any
     
     parameters {
-        choice(name: 'ENVIRONMENT', choices: ['dev', 'staging', 'prod'], description: 'Select deployment environment target')
-        string(name: 'IMAGE_TAG', defaultValue: 'build-' + env.BUILD_NUMBER, description: 'Docker Tag for the current run')
-        string(name: 'STAGING_FALLBACK_TAG', defaultValue: 'v1.0.0-stable', description: 'Fallback tag for Staging environment rollback tracking')
+        choice(name: 'ENVIRONMENT', choices: ['dev', 'staging', 'prod'], description: 'Target lifecycle stage tier for deployment execution')
+        string(name: 'IMAGE_TAG', defaultValue: 'build-' + env.BUILD_NUMBER, description: 'Compilation tag version metadata for attendance image')
+        string(name: 'STAGING_FALLBACK_TAG', defaultValue: 'v1.0.0-stable', description: 'Explicit target deployment version to roll back to if Staging execution drops')
     }
 
     stages {
-        stage('Checkout Custom Source') {
+        stage('Sourcing SCM Workspace') {
             steps {
-                // Pull code from your custom application GitHub repository
+                // Pull source from your custom application repo
                 checkout scm
             }
         }
@@ -23,41 +23,40 @@ pipeline {
         stage('Build Attendance Image') {
             steps {
                 script {
-                    echo "Building Docker image targeting the attendance microservice configuration..."
-                    // Execute the docker build context natively from the attendance subfolder
-                    // Replace 'attendance' with your service subdirectory if structured differently
+                    echo "🛠️ Initiating container image assembly targeting the 'attendance' context folder..."
+                    // Execute build context leveraging the attendance microservice configuration files
                     sh "docker build -t attendance-api:${params.IMAGE_TAG} ./attendance"
                 }
             }
         }
 
-        stage('Execute Core Deployment Strategy') {
+        stage('Execute Core Deployment Lifecycle') {
             steps {
                 script {
-                    // Instantiate the custom Groovy class via constructor
+                    // Instantiate object using class constructor matching runtime pipeline context parameter
                     def manager = new DeploymentManager(this, params.ENVIRONMENT)
                     
                     try {
-                        // 1. Run environment diagnostics
+                        // 1. Run environment diagnostic validation
                         manager.validate()
                         
-                        // 2. Trigger active container rotation
+                        // 2. Perform fresh environment rolling upgrade deploy 
                         manager.deploy(params.IMAGE_TAG)
                         
-                        // Tag current image as backup for Dev if the pipeline deployment succeeds
+                        // If DEV deploy finishes cleanly, preserve it to serve as the future instant local fallback cache point
                         if (params.ENVIRONMENT == 'dev') {
                             sh "docker tag attendance-api:${params.IMAGE_TAG} attendance-api:dev-backup"
                         }
                     } 
-                    catch (Exception err) {
-                        echo "💥 Runtime deployment error trapped: ${err.getMessage()}"
+                    catch (Exception deploymentError) {
+                        echo "💥 Deployment run anomaly trapped: ${deploymentError.getMessage()}"
                         
-                        // 3. Trigger targeted safety rollback actions
+                        // 3. Initiate context rollback actions handling target stage environment strategies
                         manager.rollback(params.STAGING_FALLBACK_TAG)
                         
-                        // Finalize status warning to Jenkins UI dashboard
+                        // Explicitly fail the job status so Jenkins reports a visual warning interface notification
                         currentBuild.result = 'FAILURE'
-                        error("Deployment cycle terminated with failures. Rollback finalized.")
+                        error("Lifecycle execution interrupted. Environment rolled back successfully to stable states.")
                     }
                 }
             }
